@@ -12,7 +12,7 @@
 #include <boost/lockfree/queue.hpp>
 #include <boost/lockfree/spsc_queue.hpp>
 
-#include <atomic_queue/include/atomic_queue/atomic_queue.h>
+#include <atomic_queue/atomic_queue.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
