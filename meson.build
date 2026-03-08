@@ -67,6 +67,16 @@ executable(
 )
 
 executable(
+  'compare_throughput2',
+  'benchmarks/compare_throughput2.cpp',
+  include_directories: include_dirs,
+  dependencies: external_deps
+  + [
+    timer,
+  ],
+)
+
+executable(
   'compare_latency',
   'benchmarks/compare_latency.cpp',
   include_directories: include_dirs,

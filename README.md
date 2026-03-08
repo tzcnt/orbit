@@ -4,18 +4,26 @@ This is a high performance lock-free multi-producer multi-consumer bounded queue
 
 ## Who should use this
 
-There are a number of existing lock-free queue implementations in C++ at this point. Based on the below benchmarks, you should consider using this queue in the following circumstances:
+There are a number of existing lock-free queue implementations in C++ at this point. Why should you use this one?
 
-- You want the lowest possible latency MPMC queue in any situation.
-- You want the highest throughput thread safe queue in any situation (including SPSC).
+- It is [faster](#benchmarks) than other implementations in most cases
+- There are no restrictions on element type
+- Offers a simple and versatile interface
+- Easily tunable and configurable for your platform and use case
+
+More precisely, in terms of performance figures, you should consider using this queue in the following circumstances:
+
+- You want the lowest possible latency MPMC queue in any situation ([benchmarks](#latency)).
+- You want the highest throughput thread safe queue in any situation (including SPSC) ([benchmarks](#throughput)).
 
 Obviously, if in doubt run your own benchmarks to choose the best solution for your use case! There are of course some cases where better solutions exist elsewhere. We list some here:
 
 - You want an unbounded queue. In which case, a block-based linked queue such as `xenium/ramalhete_queue` would be your best bet, both in terms of latency and throughput.
 - You want the lowest latency strictly SPSC queue. In which case, `atomic_queue` used in SPSC mode should give better results.
+- You want the highest throughput SPSC queue and only need blocking `push` and `pop` operations. In which case, `atomic_queue` used in SPSC mode should give better results.
 - You are running on a virtualised CPU. I doubt that some of the optimisations used here would play well with the scheduler in this case...
 
-Note that all of my benchmarking has been done on x86, although I have done some testing on ARM to verify the functionality (TODO check again since adding yield).
+Note that all of my benchmarking has been done on x86, although I have done some testing on ARM to verify the functionality, as memory barriers are different here. I may return to this in future.
 
 ## Usage
 
@@ -32,7 +40,7 @@ We provide the following public methods (note `T/T&&` indicates that it accepts 
 - `bool was_full()` Queue was full when checked. May return a false negative, but not a false positive.
 - `size_t was_size()` Approximate size of the queue, only really useful for debug purposes.
 
-Note that the size of the queue must be a power of two - using a different size will produce a compilation error. Furthermore, for non-trivially copyable types, and any type of size greater than 16 bytes, the queue is move-only. Finally, if you use the `try_push`/`try_pop` functions in a spin loop, you do not need to add a spin pause as this is built in and tuned for optimum performance already.
+Note that the size of the queue must be a power of two - using a different size will produce a compilation error. Furthermore, for non-trivially copyable types, and any type of size greater than 16 bytes, the queue is move-only. Finally, if you use the `try_push`/`try_pop` functions in a spin loop, you do not need to add a spin pause as this is built in and tuned for optimum performance already. Note that there is no measurable performance hit from using these methods, unlike some [other implementations](#throughput)!
 
 ```
 #include <circular_queue.h>
@@ -55,7 +63,7 @@ if (q.try_pop())
 
 ## Benchmarks
 
-We provide a selection of benchmarks to compare against existing implementations. All benchmarks were run on an AMD Ryzen 5600X. We show a few different configurations of our queue: Optimised for latency or throughput, and truly lock-free or the faster version described above. We colour our queue optimised for throughput in red, with the version optimised for latency in yellow. Note that the queues in grey are _SPSC-only_.
+We provide a selection of benchmarks to compare against existing implementations. All benchmarks were run on an AMD Ryzen 5600X. We show a few different configurations of our queue: Optimised for latency or throughput, and truly lock-free or the faster version described above. We colour our queue optimised for latency in yellow, throughput in red, and more aggressively optimised for throughput in black. Note that the queues in grey are _SPSC-only_.
 
 ### Latency
 
@@ -65,9 +73,15 @@ For this test, we take two queues, and in two threads repeatedly push to one que
 
 ### Throughput
 
-Here, we simply push 1000000 integers through the queue for a varying number of producers and consumers, and measure the time taken.
+Here, we simply push 1000000 integers through the queue for varying numbers of producers and consumers, and measure the time taken. We offer two benchmarks here.
 
-![latency comparison](./benchmarks/plots/comparison/throughput.png)
+The first uses the common "push" and "try_pop" pattern - consumer threads will monitor for cancellation, and clear out the queue before exiting. Note that many existing implementation struggle with this: `atomic_queue` suffers a huge performance hit when using `try_pop`, and `ramalhete_queue` does not offer any method to determine whether the queue is empty (or the current size).
+
+![throughput comparison 1](./benchmarks/plots/comparison/throughput.png)
+
+For the second benchmark, each consumer simply pops a fixed number of elements (essentially total number of values / number of consumers) before returning.
+
+![throughput comparison 2](./benchmarks/plots/comparison/throughput2.png)
 
 ## Tuning the queue for your platform
 

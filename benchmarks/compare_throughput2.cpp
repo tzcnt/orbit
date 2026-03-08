@@ -43,7 +43,6 @@ public:
     do_speed_test("lat_circular_queue", _lat_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
     do_speed_test("tp_circular_queue", _tp_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
     do_speed_test("ultra_tp_circular_queue", _ultra_tp_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
-
     do_speed_test("lat_blocking_circular_queue", _lat_blocking_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
     do_speed_test("tp_blocking_circular_queue", _tp_blocking_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
     do_speed_test("ultra_tp_blocking_circular_queue", _ultra_tp_blocking_queue, &test::circular_queue_push_thread, &test::circular_queue_pop_thread, num_producers, num_consumers, num_values);
@@ -73,20 +72,20 @@ public:
 
 private:
   template <typename T>
-  void do_speed_test(const std::string& queue_name, T& q, void (test::*prod_func)(T&, int32_t, int32_t), int32_t (test::*cons_func)(T&), int32_t num_producers, int32_t num_consumers, int32_t num_values)
+  void do_speed_test(const std::string& queue_name, T& q, void (test::*prod_func)(T&, int32_t, int32_t), void (test::*cons_func)(T&, int32_t), int32_t num_producers, int32_t num_consumers, int32_t num_values)
   {
-    _cancel_threads.store(false);
     int32_t num_values_per_producer = num_values / num_producers;
+    int32_t num_values_per_consumer = (num_values / num_consumers) - num_producers; // Ensure that more values are pushed than popped
 
     std::vector<std::thread> producers;
-    std::vector<std::future<int32_t>> consumers;
+    std::vector<std::thread> consumers;
 
     timer tm;
     tm.start();
 
     for (int32_t consumer = 0; consumer < num_consumers; ++consumer)
     {
-      consumers.emplace_back(std::async(std::launch::async, [this, cons_func, &q]() { return (this->*cons_func)(q); }));
+      consumers.emplace_back([this, cons_func, &q, num_values_per_consumer]() { return (this->*cons_func)(q, num_values_per_consumer); });
     }
 
     for (int32_t producer = 0; producer < num_producers; ++producer)
@@ -101,24 +100,16 @@ private:
       producer.join();
     }
 
-    _cancel_threads.store(true);
-
-    // Get and store all results
-    int32_t total_count = 0;
+    // Wait for consumers to finish
     for (auto& consumer : consumers)
     {
-      total_count += consumer.get();
+      consumer.join();
     }
 
     tm.stop();
-    std::ofstream file("benchmarks/data/comparison/throughput_data.csv", std::ios::app);
+    std::ofstream file("benchmarks/data/comparison/throughput_data2.csv", std::ios::app);
     std::println(file, "{}, {}, {}, {}, {}, {}, {}", queue_name, QUEUE_SIZE, "int32_t", num_producers, num_consumers, num_values, tm.get_us());
     file.close();
-
-    if (total_count != num_values_per_producer * num_producers)
-    {
-      throw std::runtime_error(std::format("Failed test: expected {} values, received {}", num_values_per_producer * num_producers, total_count));
-    }
   };
 
 private:
@@ -132,22 +123,11 @@ private:
   }
 
   template <typename T>
-  int32_t circular_queue_pop_thread(T& q)
+  void circular_queue_pop_thread(T& q, int32_t num_values)
   {
-    int32_t value;
-    int32_t count = 0;
-    while (true)
+    for (int32_t i = 1; i < num_values + 1; ++i)
     {
-      if (q.try_pop(value))
-      {
-        ++count;
-        continue;
-      }
-
-      if (_cancel_threads.load() && q.was_empty())
-      {
-        return count;
-      }
+      q.pop();
     }
   }
 
@@ -161,23 +141,11 @@ private:
   }
 
   template <typename T>
-  int32_t atomic_queue_pop_thread(T& q)
+  void atomic_queue_pop_thread(T& q, int32_t num_values)
   {
-    int32_t value;
-    int32_t count = 0;
-    while (true)
+    for (int32_t i = 1; i < num_values + 1; ++i)
     {
-      if (q.try_pop(value))
-      {
-        ++count;
-        continue;
-      }
-      lockfree::spin_pause<1>();
-
-      if (_cancel_threads.load() && q.was_empty())
-      {
-        return count;
-      }
+      q.pop();
     }
   }
 
@@ -191,37 +159,14 @@ private:
   }
 
   template <typename T>
-  int32_t ramalhete_queue_pop_thread(T& q)
+  void ramalhete_queue_pop_thread(T& q, int32_t num_values)
   {
     int32_t value;
-    int32_t count = 0;
-    while (true)
+    for (int32_t i = 1; i < num_values + 1; ++i)
     {
-      if (q.try_pop(value))
+      while (!q.try_pop(value))
       {
-        ++count;
-        continue;
-      }
-      lockfree::spin_pause<1>();
-
-      if (_cancel_threads.load())
-      {
-        bool finished = true;
-
-        for (size_t i = 0; i < 10; ++i)
-        {
-          if (q.try_pop(value))
-          {
-            ++count;
-            finished = false;
-            break;
-          }
-        }
-
-        if (finished)
-        {
-          return count;
-        }
+        lockfree::spin_pause<1>();
       }
     }
   }
@@ -236,22 +181,14 @@ private:
   }
 
   template <typename T>
-  int32_t moodycamel_pop_thread(T& q)
+  void moodycamel_pop_thread(T& q, int32_t num_values)
   {
     int32_t value;
-    int32_t count = 0;
-    while (true)
+    for (int32_t i = 1; i < num_values + 1; ++i)
     {
-      if (q.try_dequeue(value))
+      while (!q.try_dequeue(value))
       {
-        ++count;
-        continue;
-      }
-      lockfree::spin_pause<1>();
-
-      if (_cancel_threads.load() && q.size_approx() == 0)
-      {
-        return count;
+        lockfree::spin_pause<1>();
       }
     }
   }
@@ -269,22 +206,14 @@ private:
   }
 
   template <typename T>
-  int32_t boost_queue_pop_thread(T& q)
+  void boost_queue_pop_thread(T& q, int32_t num_values)
   {
     int32_t value;
-    int32_t count = 0;
-    while (true)
+    for (int32_t i = 1; i < num_values + 1; ++i)
     {
-      if (q.pop(value))
+      while (!q.pop(value))
       {
-        ++count;
-        continue;
-      }
-      lockfree::spin_pause<1>();
-
-      if (_cancel_threads.load() && q.empty())
-      {
-        return count;
+        lockfree::spin_pause<1>();
       }
     }
   }
@@ -311,13 +240,11 @@ private:
 
   boost::lockfree::queue<int32_t, boost::lockfree::capacity<QUEUE_SIZE>> _boost_queue;
   boost::lockfree::spsc_queue<int32_t, boost::lockfree::capacity<QUEUE_SIZE>> _spsc_boost_queue;
-
-  std::atomic<bool> _cancel_threads = false;
 };
 
 int main()
 {
-  std::ofstream file("benchmarks/data/comparison/throughput_data.csv", std::ios::trunc);
+  std::ofstream file("benchmarks/data/comparison/throughput_data2.csv", std::ios::trunc);
   std::println(file, "Name, Queue Size, Data Type, Num Producers, Num Consumers, Num Values, Time (us)");
   file.close();
 

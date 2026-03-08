@@ -39,93 +39,96 @@ def _name_sort_key(name):
             key.append((1, p.lower()))
     return tuple(key)
 
-# Read the CSV file
-csv_path = "benchmarks/data/comparison/throughput_data.csv"
-df = pd.read_csv(csv_path)
+filenames = ['throughput_data', 'throughput_data2']
 
-# Clean column names (remove leading/trailing spaces)
-df.columns = df.columns.str.strip()
+for filename in filenames:
+    # Read the CSV file
+    csv_path = "benchmarks/data/comparison/" + filename + ".csv"
+    df = pd.read_csv(csv_path)
 
-# Calculate throughput: (num_values_per_producer * num_producers) / time_in_seconds
-df['Throughput'] = df['Num Values'] / (df['Time (us)'] / 1e6)
+    # Clean column names (remove leading/trailing spaces)
+    df.columns = df.columns.str.strip()
 
-# Get unique queue types, producers, and consumers
-queue_types = df['Name'].unique()
-producer_counts = sorted(df['Num Producers'].unique())
-consumer_counts = sorted(df['Num Consumers'].unique())
+    # Calculate throughput: (num_values_per_producer * num_producers) / time_in_seconds
+    df['Throughput'] = df['Num Values'] / (df['Time (us)'] / 1e6)
 
-# Build list of non-empty producer/consumer combinations
-combos = []
-for num_producers in producer_counts:
-    for num_consumers in consumer_counts:
-        subset = df[(df['Num Producers'] == num_producers) & (df['Num Consumers'] == num_consumers)]
-        if not subset.empty:
-            combos.append((num_producers, num_consumers, subset))
+    # Get unique queue types, producers, and consumers
+    queue_types = df['Name'].unique()
+    producer_counts = sorted(df['Num Producers'].unique())
+    consumer_counts = sorted(df['Num Consumers'].unique())
 
-if not combos:
-    print("No data combinations found to plot.")
-    raise SystemExit(0)
+    # Build list of non-empty producer/consumer combinations
+    combos = []
+    for num_producers in producer_counts:
+        for num_consumers in consumer_counts:
+            subset = df[(df['Num Producers'] == num_producers) & (df['Num Consumers'] == num_consumers)]
+            if not subset.empty:
+                combos.append((num_producers, num_consumers, subset))
 
-# Determine grid size
-nplots = len(combos)
-ncols = min(4, nplots)
-nrows = (nplots + ncols - 1) // ncols
+    if not combos:
+        print("No data combinations found to plot.")
+        raise SystemExit(0)
 
-# Create a single large figure with a grid of subplots
-fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15 * ncols, 12 * nrows), squeeze=False)
-axes_flat = axes.flatten()
+    # Determine grid size
+    nplots = len(combos)
+    ncols = min(4, nplots)
+    nrows = (nplots + ncols - 1) // ncols
 
-for idx, (num_producers, num_consumers, subset) in enumerate(combos):
-    ax = axes_flat[idx]
-    # Group by Name and Queue Size so labels include both pieces of info
-    stats = subset.groupby(['Name', 'Queue Size'])['Throughput'].agg(['mean', 'std', 'count']).reset_index()
-    stats['stderr'] = stats['std'] / np.sqrt(stats['count'])
+    # Create a single large figure with a grid of subplots
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15 * ncols, 12 * nrows), squeeze=False)
+    axes_flat = axes.flatten()
 
-    # Create labels in the form {Name}
-    stats['label'] = stats['Name']
-    stats = stats.set_index('label')
+    for idx, (num_producers, num_consumers, subset) in enumerate(combos):
+        ax = axes_flat[idx]
+        # Group by Name and Queue Size so labels include both pieces of info
+        stats = subset.groupby(['Name', 'Queue Size'])['Throughput'].agg(['mean', 'std', 'count']).reset_index()
+        stats['stderr'] = stats['std'] / np.sqrt(stats['count'])
 
-    # Reorder stats index so numeric-like names/sizes sort naturally (e.g. '20' before '100')
-    try:
-        new_order = sorted(list(stats.index), key=_name_sort_key)
-        stats = stats.loc[new_order]
-    except Exception:
-        pass
+        # Create labels in the form {Name}
+        stats['label'] = stats['Name']
+        stats = stats.set_index('label')
 
-    # sort bars by descending mean throughput so highest bars appear first
-    stats = stats.sort_values(by='mean', ascending=False)
+        # Reorder stats index so numeric-like names/sizes sort naturally (e.g. '20' before '100')
+        try:
+            new_order = sorted(list(stats.index), key=_name_sort_key)
+            stats = stats.loc[new_order]
+        except Exception:
+            pass
 
-    x_pos = np.arange(len(stats))
-    means = stats['mean'].values
-    stderrs = stats['stderr'].values
+        # sort bars by descending mean throughput so highest bars appear first
+        stats = stats.sort_values(by='mean', ascending=False)
 
-    bars = ax.bar(x_pos, means, yerr=stderrs, capsize=4, alpha=0.8,
-                  error_kw={'linewidth': 1.5})
-    # colour every bar blue unless its label contains "spsc", in which case grey
-    for bar, label in zip(bars, stats.index):
-        bar.set_color(colour_mapping.colour_mapping[label.lower()])
+        x_pos = np.arange(len(stats))
+        means = stats['mean'].values
+        stderrs = stats['stderr'].values
 
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels([name for name in stats.index], rotation=45, ha='right')
-    ax.set_xlabel('Queue Type')
-    ax.set_ylabel('Throughput (values/sec)')
-    # logarithmic y-axis for better scaling across orders of magnitude
-    # ax.set_yscale('log', base=10)
-    ax.set_title(f'{num_producers}P × {num_consumers}C')
-    ax.grid(axis='y', alpha=0.25, linestyle='--')
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1e6:.1f}M'))
+        bars = ax.bar(x_pos, means, yerr=stderrs, capsize=4, alpha=0.8,
+                      error_kw={'linewidth': 1.5})
+        # colour every bar blue unless its label contains "spsc", in which case grey
+        for bar, label in zip(bars, stats.index):
+            bar.set_color(colour_mapping.colour_mapping[label.lower()])
 
-# Hide any unused subplots
-for j in range(nplots, len(axes_flat)):
-    axes_flat[j].axis('off')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels([name for name in stats.index], rotation=45, ha='right')
+        ax.set_xlabel('Queue Type')
+        ax.set_ylabel('Throughput (values/sec)')
+        # logarithmic y-axis for better scaling across orders of magnitude
+        # ax.set_yscale('log', base=10)
+        ax.set_title(f'{num_producers}P × {num_consumers}C')
+        ax.grid(axis='y', alpha=0.25, linestyle='--')
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1e6:.1f}M'))
 
-plt.tight_layout()
+    # Hide any unused subplots
+    for j in range(nplots, len(axes_flat)):
+        axes_flat[j].axis('off')
 
-# Save combined figure
-outpath = f"benchmarks/plots/comparison/throughput.png"
-fig.tight_layout(rect=[0, 0.01, 1, 0.97])
-fig.suptitle("Throughput by Queue Type (values/sec, mean ± stderr)", fontsize=30)
-fig.savefig(outpath, dpi=150, bbox_inches='tight')
-plt.close(fig)
+    plt.tight_layout()
 
-print(f"Saved combined grid: {outpath}")
+    # Save combined figure
+    outpath = f"benchmarks/plots/comparison/{filename.replace('_data', '')}.png"
+    fig.tight_layout(rect=[0, 0.01, 1, 0.97])
+    fig.suptitle("Throughput by Queue Type (values/sec, mean ± stderr)", fontsize=30)
+    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"Saved combined grid: {outpath}")

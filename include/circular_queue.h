@@ -334,7 +334,7 @@ private:
     }
   };
 
-  void do_spin_pause()
+  force_inline void do_spin_pause()
   {
     if constexpr (MINIMISE_LATENCY)
     {
