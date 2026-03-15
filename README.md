@@ -50,21 +50,12 @@ Note that the size of the queue must be a power of two - using a different size 
 ```cpp
 #include <orbit/mpmc_queue.h>
 
-struct msg_t { ... };
-
-// Queue of integers of size 1024, minimise latency mode
-orbit::mpmc_queue<int, 1024, true> q;
-
-std::unique_ptr<msg_t> message = std::make_unique<msg_t>(...);
-
+orbit::mpmc_queue<std::unique_ptr<msg_t>, 1024> q;
+auto message = std::make_unique<msg_t>(...);
 q.push(std::move(message));
 
-std::unique_ptr<msg_t> received_message;
-if (q.try_pop(received_message))
-{
-    ...
-}
-
+std::unique_ptr<msg_t> result;
+if (q.try_pop(result)) { ... }
 ```
 
 ## Benchmarks
