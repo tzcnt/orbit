@@ -12,6 +12,10 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__MSC_VER)
+#include <intrin.h>
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define ORBIT_FORCE_INLINE inline __attribute__((always_inline))
 #else
@@ -39,9 +43,9 @@ ORBIT_FORCE_INLINE void do_single_pause() noexcept
 #elif defined(__arm__) || defined(__aarch64__) || defined(_M_ARM64)
 
 #if defined(__GNUC__) || defined(__clang__)
-  asm volatile("yield");
+  asm volatile("isb" ::: "memory");
 #else
-  __yield();
+  __isb(_ARM64_BARRIER_SY);
 #endif
 
 #else
@@ -62,7 +66,6 @@ namespace orbit
 template <size_t NUM_PAUSES = 3>
 ORBIT_FORCE_INLINE void spin_pause() noexcept
 {
-
   orbit::detail::constexpr_for<0, NUM_PAUSES>(detail::do_single_pause);
 }
 
@@ -110,29 +113,29 @@ class mpmc_queue
 public:
   mpmc_queue() noexcept(std::is_nothrow_default_constructible_v<T>)
   {
-    _front.store(0);
-    _back.store(0);
+    _front.store(0, std::memory_order_relaxed);
+    _back.store(0, std::memory_order_relaxed);
 
     for (size_t i = 0; i < SIZE; ++i)
     {
-      _states[i] = slot_state::EMPTY;
+      _states[i].store(slot_state::EMPTY, std::memory_order_relaxed);
     }
   }
 
-  // May return false negative, but not false positive.
+  // On x86: May return false negative, but not false positive. On ARM: No formal guarantees
   bool was_empty() noexcept
   {
     uint64_t prev_front = _front.load(std::memory_order_acquire); // Ensure prev_back is loaded AFTER this
-    uint64_t prev_back = _back.load(std::memory_order_relaxed);
+    uint64_t prev_back = _back.load(std::memory_order_acquire);
 
     return prev_back == prev_front;
   }
 
-  // May return false negative, but not false positive.
+  // On x86: May return false negative, but not false positive. On ARM: No formal guarantees
   bool was_full() noexcept
   {
     uint64_t prev_back = _back.load(std::memory_order_acquire); // Ensure prev_front is loaded AFTER this
-    uint64_t prev_front = _front.load(std::memory_order_relaxed);
+    uint64_t prev_front = _front.load(std::memory_order_acquire);
 
     return prev_back == prev_front + SIZE;
   }

@@ -6,14 +6,13 @@ This is a high performance lock-free multi-producer multi-consumer bounded queue
 
 There are a number of existing lock-free queue implementations in C++ at this point. Why should you use this one?
 
-- It is [faster](#benchmarks) than other implementations in most cases
+- It is [faster](#benchmarks) than other implementations in most cases, on both x86 and ARM architectures.
 - There are no arbitrary restrictions on element type: The only limitations in place are by choice, to enforce effective usage.
     - Elements must be default constructible. They are stored contiguously in a `std::array`. If your type doesn't have a default constructor, you should probably be wrapping it in a unique pointer anyway.
     - For non-trivially copyable types of size greater than 16 bytes, all operations are move-only. Again, if your type doesn't work with this, you should be wrapping it in a unique pointer.
 - Offers a simple and versatile interface
     - Offers both blocking (`push`/`pop`) and non-blocking (`try_push`/`try_pop`) operations - with _no meaningful performance difference_. Use whichever suits your use case.
-    - Has functions `was_empty` and `was_full` which have _well-defined_ behaviour - chosen to not allow false positives.
-    - Also offers a `was_size` function - a useful approximate estimate, especially when debugging or testing!
+    - Has functions `was_empty` and `was_full`, and `was_size` which offer useful hints as well as aiding debugging. On x86, the first two are also chosen to not allow false positives. On ARM, we choose to prioritise performance and allow relaxed stores for the front and back.
 - Easily tunable and configurable for your platform and use case. See [below](#tuning-the-queue-for-your-platform) for more information on this.
 
 More precisely, in terms of performance figures, you should consider using this queue in the following circumstances:
@@ -23,11 +22,9 @@ More precisely, in terms of performance figures, you should consider using this 
 
 Obviously, if in doubt run your own benchmarks to choose the best solution for your use case! There are of course some cases where better solutions exist elsewhere. We list some here:
 
-- You want an unbounded queue. In which case, a block-based linked queue such as `xenium/ramalhete_queue` would be your best bet, both in terms of latency and throughput.
+- You need an unbounded queue. In which case, a block-based linked queue such as `xenium/ramalhete_queue` would be your best bet, both in terms of latency and throughput.
 - You only need blocking `push` and `pop` operations and are only pushing atomic types to the queue. In which case, `atomic_queue` used in SPSC mode should give better results.
 - You are running on a virtualised CPU. I doubt that some of the optimisations used here would play well with the scheduler in this case...
-
-Note that all of my benchmarking has been done on x86, although I have done some testing on ARM to verify the functionality, as memory barriers are different here. I may return to this in future.
 
 ## Usage
 
@@ -65,7 +62,13 @@ We provide a selection of benchmarks to compare against existing implementations
 
 For this test, we take two queues, and in two threads repeatedly push to one queue and pop from the other. We push 100000 integers through the queue this way. This measures the average time taken for a value to be pushed and then popped from a queue - thus is a measure of latency.
 
-![latency comparison](./benchmarks/plots/comparison/latency.png)
+![latency comparison 5600X](./benchmarks/plots/comparison/latency_5600x.png)
+*AMD Ryzen 5600X*
+
+![latency comparison M2 Pro](./benchmarks/plots/comparison/latency_m2_pro.png)
+*Apple M2 Pro*
+
+Note, we do not recommend using the queue in throughput mode if you care about latency. It turns out to perform quite well anyway in testing on x86, perhaps because spurious fails are rare (I have not verified this, just a hypothesis), but on ARM the latency is high. We do not show this on the graph to maximise readability.
 
 ### Throughput
 
@@ -73,11 +76,27 @@ Here, we simply push 1000000 integers through the queue for varying numbers of p
 
 The first uses the common "push" and "try_pop" pattern - consumer threads will monitor for cancellation, and clear out the queue before exiting. Note that many existing implementation struggle with this: `atomic_queue` suffers a huge performance hit when using `try_pop`, and `ramalhete_queue` does not offer any method to determine whether the queue is empty (or the current size), whilst other queues that did provide these methods did not offer guarantees of over or underestimation (so false positive `empty` results were allowed, for example).
 
-![throughput comparison 1](./benchmarks/plots/comparison/throughput.png)
+![throughput comparison 1 5600X](./benchmarks/plots/comparison/throughput_5600x.png)
+*AMD Ryzen 5600X*
+
+![throughput comparison 1 M2 Pro](./benchmarks/plots/comparison/throughput_m2_pro.png)
+*Apple M2 Pro*
 
 For the second benchmark, each consumer simply pops a fixed number of elements (essentially total number of values / number of consumers) before returning.
 
-![throughput comparison 2](./benchmarks/plots/comparison/throughput2.png)
+![throughput comparison 2 5600X](./benchmarks/plots/comparison/throughput2_5600x.png)
+*AMD Ryzen 5600X*
+
+![throughput comparison 2 M2 Pro](./benchmarks/plots/comparison/throughput2_m2_pro.png)
+*Apple M2 Pro*
+
+For reference, the following paremeters were chosen for each test setup:
+- AMD Ryzen 5600X:
+    - PAUSE_SHORT=3 (NONBLOCKING mode), PAUSE_SHORT=2 (BLOCKING mode)
+    - PAUSE_LONG=40 (throughput mode, coloured red), PAUSE_LONG=100 (ultra throughput mode, coloured black)
+- Apple M2 Pro:
+    - PAUSE_SHORT=2
+    - PAUSE_LONG=100 (throughput mode, coloured red), PAUSE_LONG=200 (ultra throughput mode, coloured black)
 
 ## Installation
 

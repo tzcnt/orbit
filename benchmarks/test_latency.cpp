@@ -90,8 +90,8 @@ private:
   }
 
 private:
-  orbit::mpmc_queue<std::unique_ptr<example_struct>, QUEUE_SIZE, true, false, PS, PL> _queue1;
-  orbit::mpmc_queue<std::unique_ptr<example_struct>, QUEUE_SIZE, true, false, PS, PL> _queue2;
+  orbit::mpmc_queue<std::unique_ptr<example_struct>, QUEUE_SIZE, true, true, PS, PL> _queue1;
+  orbit::mpmc_queue<std::unique_ptr<example_struct>, QUEUE_SIZE, true, true, PS, PL> _queue2;
 };
 
 void compare_pause_options()
