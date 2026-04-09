@@ -19,7 +19,7 @@ orbit_dep = declare_dependency(
 #########################################################################
 if not meson.is_subproject()
 
-add_project_arguments('-O2', language: 'cpp')
+add_project_arguments('-O3', language: 'cpp')
 add_project_arguments('-march=native', language: 'cpp')
 add_project_arguments('-Werror', language: 'cpp')
 add_project_arguments('-Wall', language: 'cpp')

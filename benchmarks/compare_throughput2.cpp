@@ -30,6 +30,11 @@
 #include "orbit/mpmc_queue.h"
 #include "timer.h"
 
+struct MCTraits : public moodycamel::ConcurrentQueueDefaultTraits
+{
+  static const size_t BLOCK_SIZE = 2048;
+};
+
 template <size_t QUEUE_SIZE = 2048, size_t PS = 3, size_t PL = 40>
 class test
 {
@@ -64,6 +69,9 @@ public:
     do_speed_test("xenium_ramalhete_queue", _ramalhete_queue, &test::ramalhete_queue_push_thread, &test::ramalhete_queue_pop_thread, num_producers, num_consumers, num_values);
 
     do_speed_test("moodycamel_concurrentqueue", _moodycamel_queue, &test::moodycamel_push_thread, &test::moodycamel_pop_thread, num_producers, num_consumers, num_values);
+
+    do_speed_test("moodycamel_token_concurrentqueue", _moodycamel_token_queue, &test::moodycamel_token_push_thread, &test::moodycamel_token_pop_thread, num_producers, num_consumers, num_values);
+
     if (num_producers == 1 && num_consumers == 1)
     {
       do_speed_test("moodycamel_readerwriterqueue", _spsc_moodycamel_queue, &test::moodycamel_push_thread, &test::moodycamel_pop_thread, num_producers, num_consumers, num_values);
@@ -194,6 +202,30 @@ private:
   }
 
   template <typename T>
+  void moodycamel_token_push_thread(T& q, int32_t start_index, int32_t num_values)
+  {
+    moodycamel::ProducerToken tok(q);
+    for (int32_t value = start_index + 1; value < start_index + num_values + 1; ++value)
+    {
+      q.enqueue(tok, value);
+    }
+  }
+
+  template <typename T>
+  void moodycamel_token_pop_thread(T& q, int32_t num_values)
+  {
+    moodycamel::ConsumerToken tok(q);
+    int32_t value;
+    for (int32_t i = 1; i < num_values + 1; ++i)
+    {
+      while (!q.try_dequeue(tok, value))
+      {
+        orbit::spin_pause<1>();
+      }
+    }
+  }
+
+  template <typename T>
   void boost_queue_push_thread(T& q, int32_t start_index, int32_t num_values)
   {
     for (int32_t value = start_index + 1; value < start_index + num_values + 1; ++value)
@@ -235,6 +267,7 @@ private:
   xenium::ramalhete_queue<int32_t, xenium::policy::reclaimer<xenium::reclamation::generic_epoch_based<>>, xenium::policy::entries_per_node<QUEUE_SIZE>> _ramalhete_queue;
 
   moodycamel::ConcurrentQueue<int32_t> _moodycamel_queue;
+  moodycamel::ConcurrentQueue<int32_t, MCTraits> _moodycamel_token_queue;
   moodycamel::ReaderWriterQueue<int32_t> _spsc_moodycamel_queue;
   moodycamel::BlockingReaderWriterCircularBuffer<int32_t> _bdd_spsc_moodycamel_queue;
 
@@ -248,7 +281,7 @@ int main()
   std::println(file, "Name, Queue Size, Data Type, Num Producers, Num Consumers, Num Values, Time (us)");
   file.close();
 
-  constexpr std::array<size_t, 4> num_options = {1, 2, 4, 6};
+  constexpr std::array<size_t, 7> num_options = {1, 2, 4, 8, 16, 32, 64};
   const int32_t num_values = 1000000;
   const size_t num_test_runs = 10;
 
